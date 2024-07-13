@@ -1,0 +1,2 @@
+#!/bin/bash
+grep -qE "^\s*dtoverlay=mrhat-rx8130" /boot/config.txt  &&  sed -ri '/^\s*dtoverlay=mrhat-rx8130/d' /boot/config.txt

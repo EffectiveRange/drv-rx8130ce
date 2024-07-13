@@ -1,0 +1,47 @@
+/*
+* Copyright (C) 2024 Effective Range Kft.
+*
+* This program is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License version 2 as
+* published by the Free Software Foundation.
+*/
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2835";
+	
+	/*  EPSON RX8130CE RTC on I2C */
+	fragment@0 {
+		target = <&i2c1>;
+
+		__overlay__ {
+			status = "okay";
+			#address-cells = <1>;
+            #size-cells = <0>;
+			/* RX8130CE */
+			rx8130rtc: rtc@32 {
+				compatible = "epson,rx8130";
+				reg = <0x32>; /* I2C address of the RTC */
+				interrupt-parent = <&gpio>;
+				interrupts = <0x05 0x02>; /* GPIO5, FALLING EDGE TRIGGER */
+				status = "okay";
+			};
+		};
+	};
+	fragment@1 {
+		target = <&gpio>;
+		__overlay__ {
+			/* set up pin for RTC IRQ */
+			rx8130_pins: rx8130_pins {
+				brcm,pins = <0x05>;
+				brcm,function = <0x0>; /* in */
+			};
+		};
+	};
+	__overrides__ {
+		rtc_irq_pin = <&rx8130rtc>, "interrupts:0",
+		              <&rx8130_pins>, "brcm,pins:0";
+	};
+
+};
