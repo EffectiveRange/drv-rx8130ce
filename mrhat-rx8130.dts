@@ -25,6 +25,7 @@
 				reg = <0x32>; /* I2C address of the RTC */
 				interrupt-parent = <&gpio>;
 				interrupts = <0x05 0x02>; /* GPIO5, FALLING EDGE TRIGGER */
+				wakeup-source;
 				status = "okay";
 			};
 		};
