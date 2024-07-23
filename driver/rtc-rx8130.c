@@ -122,6 +122,7 @@ struct rx8130_data {
   u8 ctrlreg;
   unsigned exiting : 1;
   bool enable_external_capacitor;
+  bool enable_external_battery;
 };
 
 typedef struct {
@@ -396,6 +397,15 @@ static int rx8130_init_client(struct i2c_client *client, int *need_reset) {
     ctrl[2] |= RX8130_BIT_CTRL_CHGEN;
     ctrl[2] |= RX8130_BIT_CTRL_INIEN;
     ctrl[2] |= RX8130_BIT_CTRL_BFVSEL0;
+    err = rx8130_write_reg(client, RX8130_REG_CTRL1, ctrl[2]);
+    if (err)
+      goto out;
+  }
+  if (rx8130->enable_external_battery) {
+    // enable power switching from external battery
+    dev_info(&client->dev, "Enabling power from external battery\n");
+    ctrl[2] &= ~RX8130_BIT_CTRL_CHGEN;
+    ctrl[2] |= RX8130_BIT_CTRL_INIEN;
     err = rx8130_write_reg(client, RX8130_REG_CTRL1, ctrl[2]);
     if (err)
       goto out;
@@ -746,10 +756,17 @@ static int rx8130_probe(struct i2c_client *client,
   i2c_set_clientdata(client, rx8130);
   INIT_WORK(&rx8130->work, rx8130_work);
 
-#ifdef CONFIG_OF
   rx8130->enable_external_capacitor =
-      of_property_read_bool(client->dev.of_node, "enable-external-capacitor");
-#endif
+      device_property_read_bool(&client->dev, "enable-external-capacitor");
+
+  rx8130->enable_external_battery =
+      device_property_read_bool(&client->dev, "enable-external-battery");
+
+  if (rx8130->enable_external_capacitor && rx8130->enable_external_battery) {
+    dev_err(&client->dev,
+            "external capacitor and battery specified simultaneously");
+    goto errout_free;
+  }
 
   err = rx8130_init_client(client, &need_reset);
   if (err)
