@@ -1,2 +1,13 @@
 #!/bin/bash
+echo "Removing mrhat-rx8130 from boot config ..."
 grep -qE "^\s*dtoverlay=mrhat-rx8130" /boot/config.txt  &&  sed -ri '/^\s*dtoverlay=mrhat-rx8130/d' /boot/config.txt
+
+echo "Removing module autoload for rtc-rx8130 ..."
+sed -ri '/^\s*rtc-rx8130/d' /etc/modules
+
+echo "Removing rtc_ds1307 blacklist ..."
+rm -f /etc/modprobe.d/blacklist-rtc_ds1307.conf
+
+depmod
+
+echo "removal of mrhat-rx8130 completed, please reboot ..."

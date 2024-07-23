@@ -52,10 +52,10 @@ jobs:
         uses: devcontainers/ci@v0.3
         with:
           subFolder: "${{github.workspace}}"
-          configFile: .devcontainer/amd64-container/devcontainer.json
+          configFile: .devcontainer/armhf-container/devcontainer.json
           push: never
           runCmd: |
-            make -C "/workspaces/${{steps.extract.outputs.proj}}/" all
+            "/workspaces/${{steps.extract.outputs.proj}}/build.sh"
       - 
         name: Release
         uses: softprops/action-gh-release@v1

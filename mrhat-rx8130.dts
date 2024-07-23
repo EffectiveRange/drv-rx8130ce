@@ -8,6 +8,9 @@
 /dts-v1/;
 /plugin/;
 
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+
 / {
 	compatible = "brcm,bcm2835";
 	
@@ -24,7 +27,9 @@
 				compatible = "epson,rx8130";
 				reg = <0x32>; /* I2C address of the RTC */
 				interrupt-parent = <&gpio>;
-				interrupts = <0x05 0x02>; /* GPIO5, FALLING EDGE TRIGGER */
+				interrupts = <0x05 IRQ_TYPE_EDGE_FALLING>;
+				wakeup-source;
+				enable-external-battery;
 				status = "okay";
 			};
 		};
@@ -36,12 +41,17 @@
 			rx8130_pins: rx8130_pins {
 				brcm,pins = <0x05>;
 				brcm,function = <0x0>; /* in */
+				brcm,pull = <0>; /* none */
 			};
 		};
 	};
 	__overrides__ {
 		rtc_irq_pin = <&rx8130rtc>, "interrupts:0",
 		              <&rx8130_pins>, "brcm,pins:0";
+		ext_battery = <&rx8130rtc>, "enable-external-battery?";
+		ext_capacitor = <&rx8130rtc>, "enable-external-capacitor?";
+		wakeup_source = <&rx8130rtc>, "wakeup-source?";
+		
 	};
 
 };

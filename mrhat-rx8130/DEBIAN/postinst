@@ -1,2 +1,31 @@
 #!/bin/bash
+if [[ ! -f /etc/modprobe.d/blacklist-rtc_ds1307.conf ]]
+then
+    echo "blacklist rtc_ds1307" > /etc/modprobe.d/blacklist-rtc_ds1307.conf 
+fi
+
+echo "unloading rtc_ds1307 driver if present ..."
+if [[ -n "$(lsmod | grep rtc_ds1307)"  ]];
+then
+    rmmod --force rtc_ds1307 || true
+fi
+
+if [[ -z "$(grep rtc-rx8130 /etc/modules)"  ]];
+then 
+    echo "Adding rtc-rx8130 to /etc/modules ..."
+    echo 'rtc-rx8130' >> /etc/modules
+    depmod
+fi
+
+echo "Adding in dtoverlay to boot config ..."
 grep -qE "^\s*dtoverlay=mrhat-rx8130" /boot/config.txt  ||  echo "dtoverlay=mrhat-rx8130" >> /boot/config.txt
+
+if [[ -n "$(lsmod | grep rtc_rx8130)"  ]];
+then
+    echo "RTC module can't be unloaded when updated, please reboot ... "
+else
+    modprobe rtc-rx8130 || echo "failed to load driver module ..."
+    dtoverlay mrhat-rx8130  || echo "failed to load device tree overlay ... "
+fi;
+
+
