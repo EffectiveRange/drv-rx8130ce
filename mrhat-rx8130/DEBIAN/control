@@ -1,5 +1,5 @@
 Package: mrhat-rx8130
-Version: 0.2.0
+Version: 0.2.1
 Maintainer: Effective Range Kft.
-Architecture: all
-Description: Device Tree overlay for the Epson RX8130CE RTC located on Effective-Range MrHAT v1 family of extension hats
+Architecture: armhf
+Description: Driver and device Tree overlay for the Epson RX8130CE RTC located on Effective-Range MrHAT v1 family of extension hats
