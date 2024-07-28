@@ -27,7 +27,7 @@
 				compatible = "epson,rx8130";
 				reg = <0x32>; /* I2C address of the RTC */
 				interrupt-parent = <&gpio>;
-				interrupts = <0x05 IRQ_TYPE_EDGE_FALLING>;
+				interrupts = <0x17 IRQ_TYPE_EDGE_FALLING>;
 				wakeup-source;
 				enable-external-battery;
 				status = "okay";
@@ -39,17 +39,21 @@
 		__overlay__ {
 			/* set up pin for RTC IRQ */
 			rx8130_pins: rx8130_pins {
-				brcm,pins = <0x05>;
+				brcm,pins = <0x17>;
 				brcm,function = <0x0>; /* in */
 				brcm,pull = <0>; /* none */
 			};
 		};
 	};
 	__overrides__ {
+		/* GPIO number of interrupt pin for the RTC interrupt */
 		rtc_irq_pin = <&rx8130rtc>, "interrupts:0",
 		              <&rx8130_pins>, "brcm,pins:0";
+		/* Enable this when RTC is powered by the main battery, charging is not enabled */
 		ext_battery = <&rx8130rtc>, "enable-external-battery?";
+		/* Enable this when RTC is powered by a rechargeable battery, RTC will charge the backup battery */
 		ext_capacitor = <&rx8130rtc>, "enable-external-capacitor?";
+		/* Enable this to support wake from alarm (with rtcwake) */
 		wakeup_source = <&rx8130rtc>, "wakeup-source?";
 		
 	};

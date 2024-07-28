@@ -3,6 +3,7 @@ VERSION = $(shell grep Version: mrhat-rx8130/DEBIAN/control | cut -d' ' -f2)
 # TODO: build module for all kernel versions
 KVER ?= 6.1.21+
 TARGET ?=  $(error TARGET not specified for deploy )
+IRQ_PIN ?= 23
 
 all: build/mrhat-rx8130_$(VERSION)-1_armhf.deb
 	@true
@@ -38,6 +39,8 @@ deploy: all
 	rsync -e "ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null" -avhz --progress build/mrhat-rx8130_$(VERSION)-1_armhf.deb $(TARGET):/tmp/
 	ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $(TARGET) -- sudo dpkg -r mrhat-rx8130
 	ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $(TARGET) -- sudo dpkg -i /tmp/mrhat-rx8130_$(VERSION)-1_armhf.deb
+	ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $(TARGET) -- sudo sed -ri '/^\s*dtoverlay=mrhat-rx8130/d' /boot/config.txt
+	ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $(TARGET) -- "echo 'dtoverlay=mrhat-rx8130:rtc_irq_pin=$(IRQ_PIN)' | sudo tee -a /boot/config.txt"
 
 quickdeploy: driver
 	scp mrhat-rx8130/lib/modules/$(KVER)/rtc-rx8130.ko $(TARGET):/tmp/

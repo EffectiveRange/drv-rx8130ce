@@ -8,12 +8,12 @@ appear under `/dev/rtc<X>`,and can be interacted with using the standard Linux R
 ## Usage
 
 Install the debian package from the releases.That will place the dtoverlay under the /boot/overlays directory, 
-and the post installation script also adds `dtoverlay=mrhat-rx8130` to the /boot/config.txt if not present. 
-By default, GPIO5 is used as the RTC interrupt pin, but that can be modified, by manually editing the boot config and specifying it there.
-Example:
+post installation you need to configure the device tree by adding `dtoverlay=mrhat-rx8130` to the /boot/config.txt. 
+By default, GPIO23 is used as the RTC interrupt pin, and main battery is enabled without charging, but that can be modified, by manually editing the boot config and specifying it there.
+Example for using GPIO5 for IRQ, disable main battery, enable external EDLC chargeable capacitor:
 ```bash
 # in /boot/config.txt
-dtoverlay=mrhat-rx8130,rtc_irq_pin=18
+dtoverlay=mrhat-rx8130:rtc_irq_pin=5,ext_battery=false,ext_capacitor=true
 ```
 
 ## License
