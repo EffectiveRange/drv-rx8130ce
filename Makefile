@@ -8,18 +8,22 @@ IRQ_PIN ?= 23
 all: build/mrhat-rx8130_$(VERSION)-1_armhf.deb
 	@true
 
-build/mrhat-rx8130_$(VERSION)-1_armhf.deb :  driver tools mrhat-rx8130/DEBIAN/*  build/mrhat-rx8130.dtbo
+build/mrhat-rx8130_$(VERSION)-1_armhf.deb :  driver tools mrhat-rx8130/DEBIAN/*  build/mrhat-rx8130.dtbo mrhat-rx8130/usr/include/rtc-rx8130.h
 	mkdir -p build
 	mkdir -p mrhat-rx8130/boot/overlays/
 	cp build/mrhat-rx8130.dtbo mrhat-rx8130/boot/overlays/
 	dpkg-deb --root-owner-group --build mrhat-rx8130 build/mrhat-rx8130_$(VERSION)-1_armhf.deb
 
-mrhat-rx8130/lib/modules/$(KVER)/rtc-rx8130.ko: driver/*.c driver/Makefile
+mrhat-rx8130/lib/modules/$(KVER)/rtc-rx8130.ko: driver/*.c driver/*.h driver/Makefile
 	mkdir -p build/$(KVER)
 	mkdir -p mrhat-rx8130/lib/modules/$(KVER)
 	rsync --delete -r  ./driver/ /tmp/drv-rx8130ce
-	schroot -c buildroot -u root -d /tmp/drv-rx8130ce -- make KVER=$(KVER)
+	schroot -c buildroot -u root -d /tmp/drv-rx8130ce -- make KVER=$(KVER) RXCFLAGS=$(RXCFLAGS) V=$(V)
 	cp /tmp/drv-rx8130ce/rtc-rx8130.ko mrhat-rx8130/lib/modules/$(KVER)/rtc-rx8130.ko
+
+mrhat-rx8130/usr/include/rtc-rx8130.h: driver/rtc-rx8130.h
+	mkdir -p mrhat-rx8130/usr/include/
+	cp driver/rtc-rx8130.h mrhat-rx8130/usr/include/rtc-rx8130.h
 
 driver: mrhat-rx8130/lib/modules/$(KVER)/rtc-rx8130.ko
 	@true
