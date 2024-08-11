@@ -14,6 +14,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/rtc.h>
+#include <rtc-rx8130.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
@@ -28,10 +29,38 @@
  */
 static const char default_rtc[] = "/dev/rtc0";
 
+void read_time_and_get_future_time(int fd, struct rtc_time *rtc_tm) {
+  int retval = 0;
+  /* Read the RTC time/date */
+  retval = ioctl(fd, RTC_RD_TIME, rtc_tm);
+  if (retval == -1) {
+    perror("RTC_RD_TIME ioctl");
+    exit(errno);
+  }
+
+  fprintf(stderr, "\n\nCurrent RTC date/time is %d-%d-%d, %02d:%02d:%02d.\n",
+          rtc_tm->tm_mday, rtc_tm->tm_mon + 1, rtc_tm->tm_year + 1900,
+          rtc_tm->tm_hour, rtc_tm->tm_min, rtc_tm->tm_sec);
+
+  /* Set the alarm to 5 sec in the future, and check for rollover */
+  rtc_tm->tm_sec += 5;
+  if (rtc_tm->tm_sec >= 60) {
+    rtc_tm->tm_sec %= 60;
+    rtc_tm->tm_min++;
+  }
+  if (rtc_tm->tm_min == 60) {
+    rtc_tm->tm_min = 0;
+    rtc_tm->tm_hour++;
+  }
+  if (rtc_tm->tm_hour == 24)
+    rtc_tm->tm_hour = 0;
+}
+
 int main(int argc, char **argv) {
   int i, fd, retval, irqcount = 0;
   unsigned long tmp, data;
   struct rtc_time rtc_tm;
+  struct rtc_wkalrm rtc_wk;
   const char *rtc = default_rtc;
 
   switch (argc) {
@@ -113,28 +142,7 @@ int main(int argc, char **argv) {
 
 test_READ:
   /* Read the RTC time/date */
-  retval = ioctl(fd, RTC_RD_TIME, &rtc_tm);
-  if (retval == -1) {
-    perror("RTC_RD_TIME ioctl");
-    exit(errno);
-  }
-
-  fprintf(stderr, "\n\nCurrent RTC date/time is %d-%d-%d, %02d:%02d:%02d.\n",
-          rtc_tm.tm_mday, rtc_tm.tm_mon + 1, rtc_tm.tm_year + 1900,
-          rtc_tm.tm_hour, rtc_tm.tm_min, rtc_tm.tm_sec);
-
-  /* Set the alarm to 5 sec in the future, and check for rollover */
-  rtc_tm.tm_sec += 5;
-  if (rtc_tm.tm_sec >= 60) {
-    rtc_tm.tm_sec %= 60;
-    rtc_tm.tm_min++;
-  }
-  if (rtc_tm.tm_min == 60) {
-    rtc_tm.tm_min = 0;
-    rtc_tm.tm_hour++;
-  }
-  if (rtc_tm.tm_hour == 24)
-    rtc_tm.tm_hour = 0;
+  read_time_and_get_future_time(fd, &rtc_tm);
 
   retval = ioctl(fd, RTC_ALM_SET, &rtc_tm);
   if (retval == -1) {
@@ -188,7 +196,7 @@ test_PIE:
     /* not all RTCs support periodic IRQs */
     if (errno == ENOTTY) {
       fprintf(stderr, "\nNo periodic IRQ support\n");
-      goto done;
+      goto test_WAKEUP;
     }
     perror("RTC_IRQP_READ ioctl");
     exit(errno);
@@ -206,7 +214,7 @@ test_PIE:
       /* not all RTCs can change their periodic IRQ rate */
       if (errno == ENOTTY) {
         fprintf(stderr, "\n...Periodic IRQ rate is fixed\n");
-        goto done;
+        goto test_WAKEUP;
       }
       perror("RTC_IRQP_SET ioctl");
       exit(errno);
@@ -242,6 +250,50 @@ test_PIE:
     }
   }
 
+test_WAKEUP:
+  read_time_and_get_future_time(fd, &rtc_wk.time);
+  // set wakeup timer
+  retval = ioctl(fd, SE_RTC_WKTIMER_SET, &rtc_wk.time);
+  if (retval == -1) {
+    if (errno == ENOTTY) {
+      fprintf(stderr, "\n...Wakeup Timer IRQs not supported.\n");
+      goto done;
+    }
+    perror("SE_RTC_WKTIMER_SET ioctl");
+    exit(errno);
+  }
+
+  for (i = 0; i < 3; ++i) {
+    /* Read the current wakeup timer settings */
+    retval = ioctl(fd, SE_RTC_WKTIMER_GET, &rtc_wk);
+    if (retval == -1) {
+      perror("RTC_ALM_READ ioctl");
+      exit(errno);
+    }
+
+    fprintf(stderr,
+            "Alarm time now set to %02d:%02d:%02d. Enabled: %d. Pending: %d\n",
+            rtc_wk.time.tm_hour, rtc_wk.time.tm_min, rtc_wk.time.tm_sec,
+            rtc_wk.enabled, rtc_wk.pending);
+    fprintf(stderr, "Reading 3 times 5 seconds for wakeup timer...\n");
+    fflush(stderr);
+    sleep(5);
+  }
+
+  retval = ioctl(fd, SE_RTC_WKTIMER_SET, NULL);
+  if (retval == -1) {
+    perror("SE_RTC_WKTIMER_SET NULL ioctl");
+    exit(errno);
+  }
+  retval = ioctl(fd, SE_RTC_WKTIMER_GET, &rtc_wk);
+  if (retval == -1) {
+    perror("RTC_ALM_READ after clear ioctl");
+    exit(errno);
+  }
+  fprintf(stderr,
+          "Alarm time now set to %02d:%02d:%02d. Enabled: %d. Pending: %d\n",
+          rtc_wk.time.tm_hour, rtc_wk.time.tm_min, rtc_wk.time.tm_sec,
+          rtc_wk.enabled, rtc_wk.pending);
 done:
   fprintf(stderr, "\n\n\t\t\t *** Test complete ***\n");
 

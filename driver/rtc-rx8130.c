@@ -45,6 +45,7 @@
 #include <linux/of_gpio.h>
 #include <linux/rtc.h>
 #include <linux/slab.h>
+#include <linux/string.h>
 
 #include <linux/input.h>
 #include <linux/interrupt.h>
@@ -52,6 +53,14 @@
 #include <linux/of_device.h>
 #include <linux/of_irq.h>
 #include <linux/version.h>
+
+#include "rtc-rx8130.h"
+
+#ifdef RX8130_INFO_DEBUG
+#define RX8130_DEV_DBG dev_info
+#else
+#define RX8130_DEV_DBG dev_dbg
+#endif
 
 // RX-8130 Register definitions
 #define RX8130_REG_SEC 0x10
@@ -81,6 +90,14 @@
 #define RX8130_BIT_EXT_USEL (1 << 5)
 #define RX8130_BIT_EXT_FSEL (3 << 6)
 
+#define RX8130_TSEL_1S BIT(1)
+#define RX8130_TSEL_1M (BIT(1) | BIT(0))
+#define RX8130_TSEL_1H BIT(2)
+
+#define RX8130_TC_MAX_SECONDS 65535 * 60 * 60
+#define RX8130_TC_TSEL_HOURS 65535 * 60
+#define RX8130_TC_TSEL_MINUTES 65535
+
 // Flag Register (1Dh) bit positions
 #define RX8130_BIT_FLAG_VLF (1 << 1)
 #define RX8130_BIT_FLAG_AF (1 << 3)
@@ -104,6 +121,9 @@
 #define RX8130_BIT_CTRL_SMPTSEL0 (1 << 6)
 #define RX8130_BIT_CTRL_SMPTSEL1 (1 << 7)
 
+#define RX8130_SEC_IN_HOUR 3600
+#define RX8130_SEC_IN_MIN 60
+
 static const struct i2c_device_id rx8130_id[] = {
     {"rx8130", 0}, {"rx8130-legacy", 0}, {}};
 MODULE_DEVICE_TABLE(i2c, rx8130_id);
@@ -124,14 +144,6 @@ struct rx8130_data {
   bool enable_external_capacitor;
   bool enable_external_battery;
 };
-
-typedef struct {
-  u8 number;
-  u8 value;
-} reg_data;
-
-#define SE_RTC_REG_READ _IOWR('p', 0x20, reg_data)
-#define SE_RTC_REG_WRITE _IOW('p', 0x21, reg_data)
 
 //----------------------------------------------------------------------
 // rx8130_read_reg()
@@ -237,12 +249,12 @@ static void rx8130_work(struct work_struct *work) {
     goto out;
 
   // check VLF
-  if ((status & RX8130_BIT_FLAG_VLF))
-    dev_warn(
-        &client->dev,
-        "Frequency stop was detected, probably due to a supply voltage drop\n");
+  if ((status & RX8130_BIT_FLAG_VLF)) {
+    dev_err(&client->dev, "Frequency stop was detected, probably due to a "
+                          "supply voltage drop,need reset!!!\n");
+  }
 
-  dev_dbg(&client->dev, "%s: RX8130_REG_FLAG: %xh\n", __func__, status);
+  RX8130_DEV_DBG(&client->dev, "%s: RX8130_REG_FLAG: %xh\n", __func__, status);
 
   // periodic "fixed-cycle" timer
   if (status & RX8130_BIT_FLAG_TF) {
@@ -292,27 +304,28 @@ static int rx8130_get_time(struct device *dev, struct rtc_time *dt) {
   if (err)
     return err;
 
-  dev_dbg(dev,
-          "%s: read 0x%02x 0x%02x "
-          "0x%02x 0x%02x 0x%02x 0x%02x 0x%02x\n",
-          __func__, date[0], date[1], date[2], date[3], date[4], date[5],
-          date[6]);
+  RX8130_DEV_DBG(dev,
+                 "%s: read 0x%02x 0x%02x "
+                 "0x%02x 0x%02x 0x%02x 0x%02x 0x%02x\n",
+                 __func__, date[0], date[1], date[2], date[3], date[4], date[5],
+                 date[6]);
 
   // Note: need to subtract 0x10 for index as register offset starts at 0x10
-  dt->tm_sec = bcd2bin(date[RX8130_REG_SEC - 0x10] & 0x7f);
-  dt->tm_min = bcd2bin(date[RX8130_REG_MIN - 0x10] & 0x7f);
-  dt->tm_hour =
-      bcd2bin(date[RX8130_REG_HOUR - 0x10] & 0x3f); // only 24-hour clock
-  dt->tm_mday = bcd2bin(date[RX8130_REG_MDAY - 0x10] & 0x3f);
-  dt->tm_mon = bcd2bin(date[RX8130_REG_MONTH - 0x10] & 0x1f) - 1;
-  dt->tm_year = bcd2bin(date[RX8130_REG_YEAR - 0x10]);
-  dt->tm_wday = bcd2bin(date[RX8130_REG_WDAY - 0x10] & 0x7f);
+  dt->tm_sec = bcd2bin(date[RX8130_REG_SEC - RX8130_REG_SEC] & 0x7f);
+  dt->tm_min = bcd2bin(date[RX8130_REG_MIN - RX8130_REG_SEC] & 0x7f);
+  dt->tm_hour = bcd2bin(date[RX8130_REG_HOUR - RX8130_REG_SEC] &
+                        0x3f); // only 24-hour clock
+  dt->tm_mday = bcd2bin(date[RX8130_REG_MDAY - RX8130_REG_SEC] & 0x3f);
+  dt->tm_mon = bcd2bin(date[RX8130_REG_MONTH - RX8130_REG_SEC] & 0x1f) - 1;
+  dt->tm_year = bcd2bin(date[RX8130_REG_YEAR - RX8130_REG_SEC]);
+  dt->tm_wday = bcd2bin(date[RX8130_REG_WDAY - RX8130_REG_SEC] & 0x7f);
 
   if (dt->tm_year < 70)
     dt->tm_year += 100;
 
-  dev_dbg(dev, "%s: date %ds %dm %dh %dmd %dm %dy\n", __func__, dt->tm_sec,
-          dt->tm_min, dt->tm_hour, dt->tm_mday, dt->tm_mon, dt->tm_year);
+  RX8130_DEV_DBG(dev, "%s: date %ds %dm %dh %dmd %dm %dy\n", __func__,
+                 dt->tm_sec, dt->tm_min, dt->tm_hour, dt->tm_mday, dt->tm_mon,
+                 dt->tm_year);
 
   return rtc_valid_tm(dt);
 }
@@ -330,14 +343,14 @@ static int rx8130_set_time(struct device *dev, struct rtc_time *dt) {
   u8 date[7];
   u8 ctrl;
   int ret;
-
   // set STOP bit before changing clock/calendar
   rx8130_read_reg(rx8130->client, RX8130_REG_CTRL0, &ctrl);
   rx8130->ctrlreg = ctrl | RX8130_BIT_CTRL_STOP;
   rx8130_write_reg(rx8130->client, RX8130_REG_CTRL0, rx8130->ctrlreg);
 
-  dev_dbg(dev, "%s: date %ds %dm %dh %dmd %dm %dy\n", __func__, dt->tm_sec,
-          dt->tm_min, dt->tm_hour, dt->tm_mday, dt->tm_mon, dt->tm_year);
+  RX8130_DEV_DBG(dev, "%s: date %ds %dm %dh %dmd %dm %dy\n", __func__,
+                 dt->tm_sec, dt->tm_min, dt->tm_hour, dt->tm_mday, dt->tm_mon,
+                 dt->tm_year);
 
   // Note: need to subtract 0x10 for index as register offset starts at 0x10
   date[RX8130_REG_SEC - 0x10] = bin2bcd(dt->tm_sec);
@@ -349,9 +362,9 @@ static int rx8130_set_time(struct device *dev, struct rtc_time *dt) {
   date[RX8130_REG_YEAR - 0x10] = bin2bcd(dt->tm_year % 100);
   date[RX8130_REG_WDAY - 0x10] = bin2bcd(dt->tm_wday);
 
-  dev_dbg(dev, "%s: write 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x\n",
-          __func__, date[0], date[1], date[2], date[3], date[4], date[5],
-          date[6]);
+  RX8130_DEV_DBG(
+      dev, "%s: write 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x\n",
+      __func__, date[0], date[1], date[2], date[3], date[4], date[5], date[6]);
 
   ret = rx8130_write_regs(rx8130->client, RX8130_REG_SEC, 7, date);
 
@@ -359,7 +372,6 @@ static int rx8130_set_time(struct device *dev, struct rtc_time *dt) {
   rx8130_read_reg(rx8130->client, RX8130_REG_CTRL0, &ctrl);
   rx8130->ctrlreg = ctrl & ~RX8130_BIT_CTRL_STOP;
   rx8130_write_reg(rx8130->client, RX8130_REG_CTRL0, rx8130->ctrlreg);
-
   return ret;
 }
 
@@ -370,13 +382,13 @@ static int rx8130_set_time(struct device *dev, struct rtc_time *dt) {
 //----------------------------------------------------------------------
 static int rx8130_init_client(struct i2c_client *client, int *need_reset) {
   struct rx8130_data *rx8130 = i2c_get_clientdata(client);
-  u8 ctrl[3];
+  u8 ctrl[4];
   int need_clear = 0;
   int err;
 
   // get current extension, flag, control register values
-  dev_dbg(&client->dev, "Trying to read RX8130_REG_EXT\n");
-  err = rx8130_read_regs(rx8130->client, RX8130_REG_EXT, 3, ctrl);
+  RX8130_DEV_DBG(&client->dev, "Trying to read RX8130_REG_EXT\n");
+  err = rx8130_read_regs(rx8130->client, RX8130_REG_EXT, 4, ctrl);
   if (err)
     goto out;
 
@@ -391,22 +403,30 @@ static int rx8130_init_client(struct i2c_client *client, int *need_reset) {
   // clear "test bit"
   rx8130->ctrlreg = (ctrl[2] & ~RX8130_BIT_CTRL_TEST);
 
+  // clear interrupt enable flags
+  rx8130->ctrlreg &=
+      ~(RX8130_BIT_CTRL_AIE | RX8130_BIT_CTRL_TIE | RX8130_BIT_CTRL_UIE);
+  // write control reg
+  err = rx8130_write_reg(client, RX8130_REG_CTRL0, rx8130->ctrlreg);
+  if (err)
+    goto out;
+
   if (rx8130->enable_external_capacitor) {
     // enable charging of external capacitor
     dev_info(&client->dev, "Enabling charging of external capacitor\n");
-    ctrl[2] |= RX8130_BIT_CTRL_CHGEN;
-    ctrl[2] |= RX8130_BIT_CTRL_INIEN;
-    ctrl[2] |= RX8130_BIT_CTRL_BFVSEL0;
-    err = rx8130_write_reg(client, RX8130_REG_CTRL1, ctrl[2]);
+    ctrl[3] |= RX8130_BIT_CTRL_CHGEN;
+    ctrl[3] |= RX8130_BIT_CTRL_INIEN;
+    ctrl[3] |= RX8130_BIT_CTRL_BFVSEL0;
+    err = rx8130_write_reg(client, RX8130_REG_CTRL1, ctrl[3]);
     if (err)
       goto out;
   }
   if (rx8130->enable_external_battery) {
     // enable power switching from external battery
     dev_info(&client->dev, "Enabling power from external battery\n");
-    ctrl[2] &= ~RX8130_BIT_CTRL_CHGEN;
-    ctrl[2] |= RX8130_BIT_CTRL_INIEN;
-    err = rx8130_write_reg(client, RX8130_REG_CTRL1, ctrl[2]);
+    ctrl[3] &= ~RX8130_BIT_CTRL_CHGEN;
+    ctrl[3] |= RX8130_BIT_CTRL_INIEN;
+    err = rx8130_write_reg(client, RX8130_REG_CTRL1, ctrl[3]);
     if (err)
       goto out;
   }
@@ -448,6 +468,7 @@ static int rx8130_init_client(struct i2c_client *client, int *need_reset) {
     err = rx8130_write_reg(client, RX8130_REG_CTRL0, 0x00);
     if (err)
       goto out;
+    rx8130->ctrlreg = 0;
   }
 out:
   return err;
@@ -460,6 +481,7 @@ out:
 static int rx8130_read_alarm(struct device *dev, struct rtc_wkalrm *t) {
   struct rx8130_data *rx8130 = dev_get_drvdata(dev);
   struct i2c_client *client = rx8130->client;
+  u8 regs[8];
   u8 alarmvals[3]; // minute, hour, week/day values
   u8 ctrl[3];      // extension, flag, control values
   int err;
@@ -467,19 +489,21 @@ static int rx8130_read_alarm(struct device *dev, struct rtc_wkalrm *t) {
   if (client->irq <= 0)
     return -EINVAL;
 
-  // get current minute, hour, week/day alarm values
-  err = rx8130_read_regs(client, RX8130_REG_ALMIN, 3, alarmvals);
+  // read all regs atomically
+  err = rx8130_read_regs(client, RX8130_REG_ALMIN, 8, regs);
   if (err)
     return err;
-  dev_dbg(dev, "%s: minutes:0x%02x hours:0x%02x week/day:0x%02x\n", __func__,
-          alarmvals[0], alarmvals[1], alarmvals[2]);
-
+  alarmvals[0] = regs[0];
+  alarmvals[1] = regs[1];
+  alarmvals[2] = regs[2];
+  ctrl[0] = regs[5];
+  ctrl[1] = regs[6];
+  ctrl[2] = regs[7];
+  RX8130_DEV_DBG(dev, "%s: minutes:0x%02x hours:0x%02x week/day:0x%02x\n",
+                 __func__, alarmvals[0], alarmvals[1], alarmvals[2]);
   // get current extension, flag, control register values
-  err = rx8130_read_regs(client, RX8130_REG_EXT, 3, ctrl);
-  if (err)
-    return err;
-  dev_dbg(dev, "%s: extension:0x%02x flag:0x%02x control:0x%02x \n", __func__,
-          ctrl[0], ctrl[1], ctrl[2]);
+  RX8130_DEV_DBG(dev, "%s: extension:0x%02x flag:0x%02x control:0x%02x \n",
+                 __func__, ctrl[0], ctrl[1], ctrl[2]);
 
   // Hardware alarm precision is 1 minute
   t->time.tm_sec = 0;
@@ -493,9 +517,9 @@ static int rx8130_read_alarm(struct device *dev, struct rtc_wkalrm *t) {
   t->time.tm_mon = -1;
   t->time.tm_year = -1;
 
-  dev_dbg(dev, "%s: date: %ds %dm %dh %dmd %dm %dy\n", __func__, t->time.tm_sec,
-          t->time.tm_min, t->time.tm_hour, t->time.tm_mday, t->time.tm_mon,
-          t->time.tm_year);
+  RX8130_DEV_DBG(dev, "%s: date: %ds %dm %dh %dmd %dm %dy\n", __func__,
+                 t->time.tm_sec, t->time.tm_min, t->time.tm_hour,
+                 t->time.tm_mday, t->time.tm_mon, t->time.tm_year);
 
   t->enabled = !!(rx8130->ctrlreg &
                   RX8130_BIT_CTRL_AIE); // check if interrupt is enabled
@@ -523,27 +547,27 @@ static int rx8130_set_alarm(struct device *dev, struct rtc_wkalrm *t) {
   // get current extension register
   err = rx8130_read_reg(client, RX8130_REG_EXT, &extreg);
   if (err < 0)
-    return err;
+    goto out;
 
   // get current flag register
   err = rx8130_read_reg(client, RX8130_REG_FLAG, &flagreg);
   if (err < 0)
-    return err;
+    goto out;
 
   // Hardware alarm precision is 1 minute
   alarmvals[0] = bin2bcd(t->time.tm_min);
   alarmvals[1] = bin2bcd(t->time.tm_hour);
   alarmvals[2] = bin2bcd(t->time.tm_mday);
-  dev_dbg(dev, "%s: write 0x%02x 0x%02x 0x%02x\n", __func__, alarmvals[0],
-          alarmvals[1], alarmvals[2]);
+  RX8130_DEV_DBG(dev, "%s: write 0x%02x 0x%02x 0x%02x\n", __func__,
+                 alarmvals[0], alarmvals[1], alarmvals[2]);
 
   // check interrupt enable and disable
   if (rx8130->ctrlreg & (RX8130_BIT_CTRL_AIE | RX8130_BIT_CTRL_UIE)) {
     rx8130->ctrlreg &= ~(RX8130_BIT_CTRL_AIE | RX8130_BIT_CTRL_UIE);
     err = rx8130_write_reg(rx8130->client, RX8130_REG_CTRL0, rx8130->ctrlreg);
-    if (err)
-      return err;
   }
+  if (err)
+    goto out;
 
   // write the new minute and hour values
   // Note:assume minute and hour values will be enabled. Bit 7 of each of the
@@ -552,14 +576,14 @@ static int rx8130_set_alarm(struct device *dev, struct rtc_wkalrm *t) {
   //      information
   err = rx8130_write_regs(rx8130->client, RX8130_REG_ALMIN, 2, alarmvals);
   if (err)
-    return err;
+    goto out;
 
   // set Week/Day bit
   //  Week setting is typically not used, so we will assume "day" setting
   extreg |= RX8130_BIT_EXT_WADA; // set to "day of month"
   err = rx8130_write_reg(rx8130->client, RX8130_REG_EXT, extreg);
   if (err)
-    return err;
+    goto out;
 
   // set Day of Month register
   if (alarmvals[2] == 0) {
@@ -569,16 +593,17 @@ static int rx8130_set_alarm(struct device *dev, struct rtc_wkalrm *t) {
     err = rx8130_write_reg(rx8130->client, RX8130_REG_ALWDAY, alarmvals[2]);
   }
   if (err)
-    return err;
+    goto out;
 
   // clear Alarm Flag
   flagreg &= ~(RX8130_BIT_FLAG_AF | RX8130_BIT_FLAG_UF);
   err = rx8130_write_reg(rx8130->client, RX8130_REG_FLAG, flagreg);
   if (err)
-    return err;
+    goto out;
 
   // re-enable interrupt if required
   if (t->enabled) {
+
     if (rx8130->rtc->uie_rtctimer.enabled)
       rx8130->ctrlreg |= RX8130_BIT_CTRL_UIE; // set update interrupt enable
     if (rx8130->rtc->aie_timer.enabled)
@@ -586,11 +611,9 @@ static int rx8130_set_alarm(struct device *dev, struct rtc_wkalrm *t) {
                           RX8130_BIT_CTRL_UIE); // set alarm interrupt enable
 
     err = rx8130_write_reg(rx8130->client, RX8130_REG_CTRL0, rx8130->ctrlreg);
-    if (err)
-      return err;
   }
-
-  return 0;
+out:
+  return err;
 }
 
 //----------------------------------------------------------------------
@@ -628,23 +651,166 @@ static int rx8130_alarm_irq_enable(struct device *dev, unsigned int enabled) {
   // clear alarm flag
   err = rx8130_read_reg(client, RX8130_REG_FLAG, &flagreg);
   if (err < 0)
-    return err;
+    goto out;
   flagreg &= ~RX8130_BIT_FLAG_AF;
   err = rx8130_write_reg(rx8130->client, RX8130_REG_FLAG, flagreg);
   if (err)
-    return err;
+    goto out;
 
   // update the Control register if the setting changed
   if (ctrl != rx8130->ctrlreg) {
     rx8130->ctrlreg = ctrl;
     err = rx8130_write_reg(rx8130->client, RX8130_REG_CTRL0, rx8130->ctrlreg);
-    if (err)
-      return err;
   }
-
+out:
+  return err;
+}
+//---------------------------------------------------------------------------
+// rx8130_get_wakeup_timer()
+//
+//---------------------------------------------------------------------------
+static int rx8130_get_wakeup_timer(struct device *dev,
+                                   struct rtc_wkalrm *time) {
+  struct i2c_client *client = to_i2c_client(dev);
+  struct rtc_time curr_time;
+  u64 wakeup_seconds = 0;
+  int err = 0;
+  u8 regs[4];
+  u8 tsel = 0;
+  time64_t curr_time64 = 0;
+  time64_t wakeup_time64 = 0;
+  memset(time, 0, sizeof(*time));
+  // get current HW time
+  err = rx8130_get_time(dev, &curr_time);
+  if (err) {
+    return err;
+  }
+  err = rx8130_read_regs(client, RX8130_REG_TCOUNT0, 4, regs);
+  if (err) {
+    return err;
+  }
+  tsel = regs[2] & RX8130_BIT_EXT_TSEL;
+  wakeup_seconds = regs[0] | (regs[1] << 8);
+  if (tsel == RX8130_TSEL_1H) {
+    wakeup_seconds *= RX8130_SEC_IN_HOUR;
+  } else if (tsel == RX8130_TSEL_1M) {
+    wakeup_seconds *= RX8130_SEC_IN_MIN;
+  }
+  curr_time64 = rtc_tm_to_time64(&curr_time);
+  wakeup_time64 = curr_time64 + wakeup_seconds;
+  rtc_time64_to_tm(curr_time64, &time->time);
+  time->enabled = !!(regs[2] & RX8130_BIT_EXT_TE);
+  time->pending = (regs[3] & RX8130_BIT_FLAG_TF) && time->enabled;
+  RX8130_DEV_DBG(dev,
+                 "current time64: %lld, wakeup seconds:%llu, wakeup time64: "
+                 "%lld, enabled:%d, pending: %d",
+                 curr_time64, wakeup_seconds, wakeup_time64, time->enabled,
+                 time->pending);
   return 0;
 }
 
+//---------------------------------------------------------------------------
+// rx8130_set_wakeup_timer()
+//
+//---------------------------------------------------------------------------
+static int rx8130_set_wakeup_timer(struct device *dev, struct rtc_time *time) {
+  struct i2c_client *client = to_i2c_client(dev);
+  struct rx8130_data *rx8130 = dev_get_drvdata(dev);
+  struct rtc_time curr_time;
+  int err = 0;
+  time64_t curr_time_epoch = 0;
+  time64_t wakeup_time_epoch = 0;
+  time64_t wakeup_seconds = 0;
+  u64 wakeup_val = 0;
+  u8 tsel = RX8130_TSEL_1S;
+  u8 regs[5] = {0, 0, 0, 0, 0};
+  u8 timer_counter[2] = {0, 0};
+  if (time != NULL) {
+    // get current HW time
+    err = rx8130_get_time(dev, &curr_time);
+    if (err) {
+      return err;
+    }
+    curr_time_epoch = rtc_tm_to_time64(&curr_time);
+    wakeup_time_epoch = rtc_tm_to_time64(time);
+    RX8130_DEV_DBG(dev, "current time %d-%d-%d %d:%d:%d epoch: %lld",
+                   curr_time.tm_year, curr_time.tm_mon, curr_time.tm_mday,
+                   curr_time.tm_hour, curr_time.tm_min, curr_time.tm_sec,
+                   curr_time_epoch);
+    RX8130_DEV_DBG(dev, "time %d-%d-%d %d:%d:%d epoch: %lld", time->tm_year,
+                   time->tm_mon, time->tm_mday, time->tm_hour, time->tm_min,
+                   time->tm_sec, wakeup_time_epoch);
+    // calculate seconds until wakeup
+    wakeup_seconds = wakeup_time_epoch - curr_time_epoch;
+    if (wakeup_seconds <= 0 || wakeup_seconds > RX8130_TC_MAX_SECONDS)
+      return -EINVAL;
+    wakeup_val = wakeup_seconds;
+    if (wakeup_seconds > RX8130_TC_TSEL_HOURS) {
+      // Hour granularity
+      tsel = RX8130_TSEL_1H;
+      wakeup_seconds = do_div(wakeup_val, RX8130_SEC_IN_HOUR);
+    } else if (wakeup_seconds > RX8130_TC_TSEL_MINUTES) {
+      // Minute granularity
+      tsel = RX8130_TSEL_1M;
+      wakeup_seconds = do_div(wakeup_val, RX8130_SEC_IN_MIN);
+    }
+    // seconds granularity
+  }
+
+  err = rx8130_read_regs(client, RX8130_REG_TCOUNT0, 5, regs);
+  if (err)
+    goto out;
+  rx8130->ctrlreg =
+      regs[RX8130_REG_CTRL0 - RX8130_REG_TCOUNT0] & ~(RX8130_BIT_CTRL_TIE);
+  // disable Timer interrupt enable
+  err = rx8130_write_reg(rx8130->client, RX8130_REG_CTRL0, rx8130->ctrlreg);
+  if (err)
+    goto out;
+  // disable Timer Enable
+  regs[RX8130_REG_EXT - RX8130_REG_TCOUNT0] &= ~(RX8130_BIT_EXT_TE);
+  err = rx8130_write_reg(rx8130->client, RX8130_REG_EXT,
+                         regs[RX8130_REG_EXT - RX8130_REG_TCOUNT0]);
+  if (err)
+    goto out;
+  // clear wakeup flag
+  regs[RX8130_REG_FLAG - RX8130_REG_TCOUNT0] &= ~(RX8130_BIT_FLAG_TF);
+  err = rx8130_write_reg(rx8130->client, RX8130_REG_FLAG,
+                         regs[RX8130_REG_FLAG - RX8130_REG_TCOUNT0]);
+  if (err || time == NULL)
+    goto out;
+  // write timer select
+  regs[RX8130_REG_EXT - RX8130_REG_TCOUNT0] &= ~(RX8130_BIT_EXT_TSEL);
+  regs[RX8130_REG_EXT - RX8130_REG_TCOUNT0] |= tsel;
+  err = rx8130_write_reg(rx8130->client, RX8130_REG_EXT,
+                         regs[RX8130_REG_EXT - RX8130_REG_TCOUNT0]);
+  if (err)
+    goto out;
+
+  // write timer counter values
+  timer_counter[0] = wakeup_seconds & 0xFF;
+  timer_counter[1] = (wakeup_seconds & 0xFF00) >> 8;
+  err = rx8130_write_regs(client, RX8130_REG_TCOUNT0, 2, timer_counter);
+  if (err)
+    goto out;
+
+  // enable Timer interrupt enable
+  rx8130->ctrlreg |= (RX8130_BIT_CTRL_TIE);
+  err = rx8130_write_reg(rx8130->client, RX8130_REG_CTRL0, rx8130->ctrlreg);
+  if (err)
+    goto out;
+  // enable Timer Enable
+  regs[RX8130_REG_EXT - RX8130_REG_TCOUNT0] |= RX8130_BIT_EXT_TE;
+  err = rx8130_write_reg(rx8130->client, RX8130_REG_EXT,
+                         regs[RX8130_REG_EXT - RX8130_REG_TCOUNT0]);
+  if (err)
+    goto out;
+  RX8130_DEV_DBG(dev, "wakeup timer set to %lld %s", wakeup_seconds,
+                 (tsel == RX8130_TSEL_1H
+                      ? "hours"
+                      : (tsel == RX8130_TSEL_1M ? "minutes" : "seconds")));
+out:
+  return err;
+}
 //---------------------------------------------------------------------------
 // rx8130_ioctl()
 //
@@ -652,14 +818,14 @@ static int rx8130_alarm_irq_enable(struct device *dev, unsigned int enabled) {
 static int rx8130_ioctl(struct device *dev, unsigned int cmd,
                         unsigned long arg) {
   struct i2c_client *client = to_i2c_client(dev);
-  // struct rx8130_data *rx8130 = dev_get_drvdata(dev);
-  // struct mutex *lock = &rx8130->rtc->ops_lock;
   int ret = 0;
   int tmp;
   void __user *argp = (void __user *)arg;
   reg_data reg;
+  struct rtc_time tm;
+  struct rtc_wkalrm wkalarm;
 
-  dev_dbg(dev, "%s: cmd=%x\n", __func__, cmd);
+  RX8130_DEV_DBG(dev, "%s: cmd=%x\n", __func__, cmd);
 
   switch (cmd) {
   case SE_RTC_REG_READ:
@@ -667,9 +833,7 @@ static int rx8130_ioctl(struct device *dev, unsigned int cmd,
       return -EFAULT;
     if (reg.number < RX8130_REG_SEC || reg.number > RX8130_REG_END)
       return -EFAULT;
-    // mutex_lock(lock);
     ret = rx8130_read_reg(client, reg.number, &reg.value);
-    // mutex_unlock(lock);
     if (!ret)
       return copy_to_user(argp, &reg, sizeof(reg)) ? -EFAULT : 0;
     break;
@@ -679,15 +843,21 @@ static int rx8130_ioctl(struct device *dev, unsigned int cmd,
       return -EFAULT;
     if (reg.number < RX8130_REG_SEC || reg.number > RX8130_REG_END)
       return -EFAULT;
-    // mutex_lock(lock);
     ret = rx8130_write_reg(client, reg.number, reg.value);
-    // mutex_unlock(lock);
     break;
-
+  case SE_RTC_WKTIMER_SET:
+    if (argp != NULL && copy_from_user(&tm, argp, sizeof(tm)))
+      return -EFAULT;
+    ret = rx8130_set_wakeup_timer(dev, argp != NULL ? &tm : NULL);
+    break;
+  case SE_RTC_WKTIMER_GET:
+    ret = rx8130_get_wakeup_timer(dev, &wkalarm);
+    if (!ret) {
+      return copy_to_user(argp, &wkalarm, sizeof(wkalarm)) ? -EFAULT : 0;
+    }
+    break;
   case RTC_VL_READ:
-    // mutex_lock(lock);
     ret = rx8130_read_reg(client, RX8130_REG_FLAG, &reg.value);
-    // mutex_unlock(lock);
     if (!ret) {
       tmp = !!(reg.value & RX8130_BIT_FLAG_VLF);
       return copy_to_user(argp, &tmp, sizeof(tmp)) ? -EFAULT : 0;
@@ -695,15 +865,12 @@ static int rx8130_ioctl(struct device *dev, unsigned int cmd,
     break;
 
   case RTC_VL_CLR:
-    // mutex_lock(lock);
     ret = rx8130_read_reg(client, RX8130_REG_FLAG, &reg.value);
     if (!ret) {
       reg.value &= ~RX8130_BIT_FLAG_VLF;
       ret = rx8130_write_reg(client, RX8130_REG_FLAG, reg.value);
     }
-    // mutex_unlock(lock);
     break;
-
   default:
     return -ENOIOCTLCMD;
   }
@@ -793,6 +960,11 @@ static int rx8130_probe(struct i2c_client *client,
   if (device_property_read_bool(&client->dev, "wakeup-source")) {
     dev_info(&client->dev, "setting device as wakeup capable\n");
     device_set_wakeup_capable(&client->dev, true);
+    err = device_wakeup_enable(&client->dev);
+    if (err) {
+      dev_err(&client->dev, "unable to enable wakeup capable");
+      goto errout_reg;
+    }
   }
 
   if (client->irq > 0) {
