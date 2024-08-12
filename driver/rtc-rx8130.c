@@ -776,8 +776,12 @@ static int rx8130_set_wakeup_timer(struct device *dev, struct rtc_time *time) {
   regs[RX8130_REG_FLAG - RX8130_REG_TCOUNT0] &= ~(RX8130_BIT_FLAG_TF);
   err = rx8130_write_reg(rx8130->client, RX8130_REG_FLAG,
                          regs[RX8130_REG_FLAG - RX8130_REG_TCOUNT0]);
-  if (err || time == NULL)
+  if (err || time == NULL) {
+    if (time == NULL) {
+      RX8130_DEV_DBG(dev, "wakeup timer cleared");
+    }
     goto out;
+  }
   // write timer select
   regs[RX8130_REG_EXT - RX8130_REG_TCOUNT0] &= ~(RX8130_BIT_EXT_TSEL);
   regs[RX8130_REG_EXT - RX8130_REG_TCOUNT0] |= tsel;

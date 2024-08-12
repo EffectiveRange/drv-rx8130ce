@@ -1,5 +1,7 @@
 {
     "files.associations": {
-        "rtc.h": "c"
+        "rtc.h": "c",
+        "rtctime.h": "c",
+        "fcntl.h": "c"
     }
 }
