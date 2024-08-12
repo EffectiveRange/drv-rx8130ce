@@ -10,15 +10,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-typedef unsigned char u8;
-typedef unsigned bool;
-typedef struct {
-  u8 number;
-  u8 value;
-} reg_data;
-
-#define SE_RTC_REG_READ _IOWR('p', 0x20, reg_data)
-#define SE_RTC_REG_WRITE _IOW('p', 0x21, reg_data)
+#include "rtc-rx8130.h"
+#include "rtctime.h"
 
 // from linux-src/include/uapi/linux/rtc.h
 #ifndef RTC_VL_READ
@@ -28,7 +21,7 @@ typedef struct {
 
 unsigned htoi(const char *psHex) {
   unsigned i = 0;
-  const bool fNeg = (*psHex == '-');
+  const int fNeg = (*psHex == '-');
 
   if (fNeg)
     psHex++;
@@ -49,10 +42,16 @@ unsigned htoi(const char *psHex) {
 
 void usage(void) {
   printf("  Read from register:\n");
-  printf("  sudo ./ioctl read reg_number\n");
+  printf("  sudo ./ioctl read <reg_number>\n");
   printf("\n");
   printf("  Write to register:\n");
-  printf("  sudo ./ioctl write reg_number reg_value\n");
+  printf("  sudo ./ioctl write <reg_number> <reg_value>\n");
+  printf("\n");
+  printf("  Write wakeup:\n");
+  printf("  sudo ./ioctl wakeup <seconds>\n");
+  printf("\n");
+  printf("  Clear wakeup:\n");
+  printf("  sudo ./ioctl wakeup \n");
   printf("\n");
   printf("  Note:\n");
   printf("  reg_number and reg_value are in hex format\n");
@@ -81,7 +80,7 @@ int main(int argc, char **argv) {
     retval = ioctl(fd, SE_RTC_REG_READ, &reg);
     if (retval == -1) {
       perror("SE_RTC_REG_READ ioctl");
-      exit(errno);
+      goto err;
     } else
       printf("REG[%02xh]=>%02xh\n", reg.number, reg.value);
     goto done;
@@ -93,7 +92,7 @@ int main(int argc, char **argv) {
     retval = ioctl(fd, SE_RTC_REG_WRITE, &reg);
     if (retval == -1) {
       perror("SE_RTC_REG_WRITE ioctl");
-      exit(errno);
+      goto err;
     } else
       printf("REG[%02xh]<=%02xh\n", reg.number, reg.value);
     goto done;
@@ -104,7 +103,7 @@ int main(int argc, char **argv) {
     retval = ioctl(fd, RTC_VL_READ, &vl);
     if (retval == -1) {
       perror("RTC_VL_READ ioctl");
-      exit(errno);
+      goto err;
     } else
       printf("%d\n", vl);
     goto done;
@@ -114,7 +113,30 @@ int main(int argc, char **argv) {
     retval = ioctl(fd, RTC_VL_CLR, 0);
     if (retval == -1) {
       perror("RTC_VL_CLR ioctl");
-      exit(errno);
+      goto err;
+    }
+
+    goto done;
+  }
+
+  if (!strcmp(argv[1], "wakeup") && argc == 3) {
+    struct rtc_time tm;
+    read_time_and_get_future_time(fd, &tm, atoi(argv[2]));
+    // set wakeup timer
+    retval = ioctl(fd, SE_RTC_WKTIMER_SET, &tm);
+    if (retval == -1) {
+      perror("SE_RTC_WKTIMER_SET ioctl");
+      goto err;
+    }
+
+    goto done;
+  }
+  if (!strcmp(argv[1], "wakeup")) {
+    // clear wakeup timer
+    retval = ioctl(fd, SE_RTC_WKTIMER_SET, NULL);
+    if (retval == -1) {
+      perror("SE_RTC_WKTIMER_SET ioctl");
+      goto err;
     }
 
     goto done;
@@ -126,4 +148,9 @@ done:
   close(fd);
 
   return 0;
+err: {
+  int error = errno;
+  close(fd);
+  exit(error);
+}
 }

@@ -22,39 +22,14 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "rtctime.h"
+
 /*
  * This expects the new RTC class driver framework, working with
  * clocks that will often not be clones of what the PC-AT had.
  * Use the command line to specify another RTC if you need one.
  */
 static const char default_rtc[] = "/dev/rtc0";
-
-void read_time_and_get_future_time(int fd, struct rtc_time *rtc_tm) {
-  int retval = 0;
-  /* Read the RTC time/date */
-  retval = ioctl(fd, RTC_RD_TIME, rtc_tm);
-  if (retval == -1) {
-    perror("RTC_RD_TIME ioctl");
-    exit(errno);
-  }
-
-  fprintf(stderr, "\n\nCurrent RTC date/time is %d-%d-%d, %02d:%02d:%02d.\n",
-          rtc_tm->tm_mday, rtc_tm->tm_mon + 1, rtc_tm->tm_year + 1900,
-          rtc_tm->tm_hour, rtc_tm->tm_min, rtc_tm->tm_sec);
-
-  /* Set the alarm to 5 sec in the future, and check for rollover */
-  rtc_tm->tm_sec += 5;
-  if (rtc_tm->tm_sec >= 60) {
-    rtc_tm->tm_sec %= 60;
-    rtc_tm->tm_min++;
-  }
-  if (rtc_tm->tm_min == 60) {
-    rtc_tm->tm_min = 0;
-    rtc_tm->tm_hour++;
-  }
-  if (rtc_tm->tm_hour == 24)
-    rtc_tm->tm_hour = 0;
-}
 
 int main(int argc, char **argv) {
   int i, fd, retval, irqcount = 0;
@@ -142,7 +117,7 @@ int main(int argc, char **argv) {
 
 test_READ:
   /* Read the RTC time/date */
-  read_time_and_get_future_time(fd, &rtc_tm);
+  read_time_and_get_future_time(fd, &rtc_tm, 5);
 
   retval = ioctl(fd, RTC_ALM_SET, &rtc_tm);
   if (retval == -1) {
@@ -251,7 +226,7 @@ test_PIE:
   }
 
 test_WAKEUP:
-  read_time_and_get_future_time(fd, &rtc_wk.time);
+  read_time_and_get_future_time(fd, &rtc_wk.time, 5);
   // set wakeup timer
   retval = ioctl(fd, SE_RTC_WKTIMER_SET, &rtc_wk.time);
   if (retval == -1) {
