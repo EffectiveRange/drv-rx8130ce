@@ -698,7 +698,14 @@ static int rx8130_get_wakeup_timer(struct device *dev,
   }
   curr_time64 = rtc_tm_to_time64(&curr_time);
   wakeup_time64 = curr_time64 + wakeup_seconds;
-  rtc_time64_to_tm(curr_time64, &time->time);
+  rtc_time64_to_tm(wakeup_time64, &time->time);
+  // truncate min/sec based on tsel
+  if (tsel == RX8130_TSEL_1H) {
+    time->time.tm_min = 0;
+    time->time.tm_sec = 0;
+  } else if (tsel == RX8130_TSEL_1M) {
+    time->time.tm_sec = 0;
+  }
   time->enabled = !!(regs[2] & RX8130_BIT_EXT_TE);
   time->pending = (regs[3] & RX8130_BIT_FLAG_TF) && time->enabled;
   RX8130_DEV_DBG(dev,
@@ -725,6 +732,7 @@ static int rx8130_set_wakeup_timer(struct device *dev, struct rtc_time *time) {
   u8 tsel = RX8130_TSEL_1S;
   u8 regs[5] = {0, 0, 0, 0, 0};
   u8 timer_counter[2] = {0, 0};
+  u32 wakeup_err_offset = 0;
   if (time != NULL) {
     // get current HW time
     err = rx8130_get_time(dev, &curr_time);
@@ -733,6 +741,8 @@ static int rx8130_set_wakeup_timer(struct device *dev, struct rtc_time *time) {
     }
     curr_time_epoch = rtc_tm_to_time64(&curr_time);
     wakeup_time_epoch = rtc_tm_to_time64(time);
+    // calculate seconds until wakeup
+    wakeup_seconds = wakeup_time_epoch - curr_time_epoch;
     RX8130_DEV_DBG(dev, "current time %d-%d-%d %d:%d:%d epoch: %lld",
                    curr_time.tm_year, curr_time.tm_mon, curr_time.tm_mday,
                    curr_time.tm_hour, curr_time.tm_min, curr_time.tm_sec,
@@ -740,21 +750,22 @@ static int rx8130_set_wakeup_timer(struct device *dev, struct rtc_time *time) {
     RX8130_DEV_DBG(dev, "time %d-%d-%d %d:%d:%d epoch: %lld", time->tm_year,
                    time->tm_mon, time->tm_mday, time->tm_hour, time->tm_min,
                    time->tm_sec, wakeup_time_epoch);
-    // calculate seconds until wakeup
-    wakeup_seconds = wakeup_time_epoch - curr_time_epoch;
     if (wakeup_seconds <= 0 || wakeup_seconds > RX8130_TC_MAX_SECONDS)
       return -EINVAL;
     wakeup_val = wakeup_seconds;
     if (wakeup_seconds > RX8130_TC_TSEL_HOURS) {
       // Hour granularity
       tsel = RX8130_TSEL_1H;
-      wakeup_seconds = do_div(wakeup_val, RX8130_SEC_IN_HOUR);
+      wakeup_err_offset = do_div(wakeup_val, RX8130_SEC_IN_HOUR);
     } else if (wakeup_seconds > RX8130_TC_TSEL_MINUTES) {
       // Minute granularity
       tsel = RX8130_TSEL_1M;
-      wakeup_seconds = do_div(wakeup_val, RX8130_SEC_IN_MIN);
+      wakeup_err_offset = do_div(wakeup_val, RX8130_SEC_IN_MIN);
     }
     // seconds granularity
+    wakeup_seconds = wakeup_val;
+    RX8130_DEV_DBG(dev, "wakeup in time unit: %lld tsel: %u seconds error: %u",
+                   wakeup_seconds, tsel, wakeup_err_offset);
   }
 
   err = rx8130_read_regs(client, RX8130_REG_TCOUNT0, 5, regs);
