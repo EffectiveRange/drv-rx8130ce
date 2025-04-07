@@ -5,3 +5,4 @@ maintainer: Effective Range Kft.
 description: >
  Driver and device Tree overlay for the Epson RX8130CE RTC 
  located on Effective-Range MrHAT v1 family of extension hats
+blacklist: rtc_ds1307
