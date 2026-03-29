@@ -11,8 +11,8 @@ name: CI/CD
 
 on:
   push:
-      branches: main
-      tags: v*.*.*
+      branches: [main]
+      tags: [v*.*.*]
 
   pull_request:
       types:
@@ -22,9 +22,9 @@ on:
 
 jobs:
  call_ci:
-  uses: EffectiveRange/ci-workflows/.github/workflows/xdriver-ci.yaml@v4
+  uses: EffectiveRange/ci-workflows/.github/workflows/xdriver-ci.yaml@latest-xdriver
   secrets: 
     access-token: ${{secrets.ACTIONS_RO_TOKEN}}
   with:
-    build-version: '["armhf-bookworm", "arm64-bookworm","armhf-bullseye", "arm64-bullseye"]'
+    build-version: '["armhf-trixie", "arm64-trixie"]'
   
